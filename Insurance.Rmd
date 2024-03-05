@@ -1,0 +1,418 @@
+---
+title: "Project Part B"
+author: "Rushabh Khara"
+output:
+  pdf_document:
+    latex_engine: xelatex
+geometry: "left=1cm,right=1cm,top=1.5cm,bottom=1.5cm"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+load("/Users/rushabhkhara/Files/University/STAT3011/Data/classdata.RData")
+library(ISLR)
+library(ggplot2)
+library(GGally)
+library(car)
+library(gridExtra)
+require(gridExtra)
+library(MASS)
+library(Hmisc)
+library(ggthemes)
+library(ggmap)
+library(grid)
+library(png)
+```
+
+# Introduction 
+
+The U.S. Commission on Civil Rights investigated claims of insurance redlining in Chicago. Initial data from the Illinois Department of Insurance highlighted policy actions by ZIP code from December 1977 to February 1978. This data represented over 70% of homeowner policies in Chicago. FAIR plan policies, often chosen by those denied standard insurance, were also considered. The Chicago Police provided 1975 theft data, emphasizing that insurers often use past years' data for decisions. Fire data for the same year was sourced from the Chicago Fire Department. Both datasets were organized by ZIP code. Lastly, the US Census Bureau offered demographic and residential data for Chicago's ZIP codes. To normalize differences, thefts were calculated as incidents per 1,000 residents, with similar adjustments for fire and insurance data. The goal of the following analysis is to explore the extent to which racial composition and age of housing affected underwriting practices after controlling for factors like fire, theft, and income.
+
+# Exploratory Data Analysis and Data Manipulation 
+
+```{r}
+chicago <- as.data.frame(insure)
+knitr::kable(summary(chicago), align = 'l', caption = "Summary Table")
+```
+Upon examining the `insure` dataset summary, a observations is evident. The scale of the Income variable substantially surpasses other variables in the dataset. Furthermore, it's common to apply a natural logarithm transformation to `Income` variables to mitigate potential skewness, ensuring that exceptionally high values don't unduly influence the results.
+
+```{r }
+# Transforming variables
+chicago$'IncomeLog' <- log(chicago$Income)
+
+# New variable to take Invol and Volun in consideration
+chicago$Involrate <- chicago$Invol/(chicago$Invol + chicago$Volun)
+```
+
+It is also important to note that in order identify insurability of a neighbourhood, we need a comprehensive variable that would include information regarding voluntary as well as involuntary policies in order to make an informed decision. It is not advisable to use `Invol` as a sole response variable a `Invol` of value 0 doesn't mean that neighbourhood would be redlining free. It could be that the residents, due to economic constraints, might not be in a position to afford insurance despite the need. It's possible that the residents are not aware of the insurance options available to them or the benefits of such policies. This lack of awareness could lead to a low number of policies, both voluntary and involuntary. Sometimes, external incentives or government programs might cover some risks, reducing the perceived need for private insurance. It is just to say that there can be multitudes of reasons, making the `Invol` a volatile variable and more prone to external factors. We introduce a new and more robust variable `Involrate`. The measure is a proportion that indicates the share of involuntary market activity relative to the total insurance activity in the neighborhood. This metric provides a standardized way to gauge the reliance on the involuntary market. 
+
+$$
+{Involrate} = \frac{{Invol}}{{Invol} + {Volun}}
+$$
+
+\newpage
+It is not to say that the new introduced variable has no pitfalls. In sparsely populated areas, even a few involuntary policies can drastically affect the Involrate, making it seem disproportionately high. Hence, this variable should only be used as a device to better understand the situation rather than taking it as a definitive solution. If decision-makers rely too heavily on `Involrate` without considering other contextual and qualitative data, it can lead to a narrow perspective on insurability.
+
+```{r, message=FALSE, fig.align='center'}
+# Plot co-variable plot to have a look at the distribution and corelation 
+library(ggplot2)
+library(MASS)
+library(gridExtra)
+library(GGally)
+
+variables <- c("Race","Fire","Theft","Age","IncomeLog", "Involrate")
+# ggpairs(chicago[,variables]) 
+
+
+# Create a custom function to modify the continuous-continuous plot component
+my_custom <- function(data, mapping, ...){
+  p <- ggplot(data = data, mapping = mapping) +
+    geom_point() +
+    geom_smooth(method = "loess", color = "red", ...) + theme_minimal()
+  p
+}
+
+# Use the ggpairs function and specify the custom function for continuous-continuous plots
+#ggpairs(chicago[,variables], lower = list(continuous = wrap(my_custom, alpha = 0.5))) + theme_light()
+
+# pairs(chicago[,variables ],panel=function(x,y){points(x,y);lines(lowess(x,y), col = 'red')}, main = "Scatterplot Matrix")
+
+img <- readPNG("Rplot.png")
+grid.raster(img)
+
+```
+
+The scatterplot matrix reveals the following insights:
+
+1) A strong positive correlation between `Race` and `Involrate`, suggesting racial factors may influence insurance involrate.
+
+2) `Fire` incidents correlate positively with `Theft` and `Age`, and negatively with `IncomeLog`, implying neighborhoods with more fires might have higher thefts and older houses, but lower income levels.
+
+3) `Age` negatively correlates with `IncomeLog`, suggesting older neighborhoods might have lower incomes.
+
+4) `IncomeLog` has a pronounced negative relationship with `Involrate` , indicating areas with low incomes might get their insurances rejected more often.
+
+5) The logarithmic transformation of our Income data not only reduces its scale but also yields a more normalized distribution.
+
+To enhance our data visualization and facilitate a more robust interpretation, we can project the values onto a map of Chicago as heatmap.
+
+
+```{r, fig.align='center'}
+img <- readPNG("Picture 1.png")
+grid.raster(img)
+```
+
+\newpage
+It's important to mention that zip codes `60627` and `60635` are now defunctional and thus excluded from our mapping. However, this exclusion is statistically negligible due to the ample sample size available for analysis.
+ 
+The heatmap confirms our initial observations, effectively highlighting the varying degrees of correlation between `Involrate` and other variables through color intensities. It reveals a strong positive correlation with `Race` and `Fire`, a almost no correlation with `Theft` and `Age`, and a high negative correlation with `IncomeLog.` We also observe a notable negative correlation between `Race` and `IncomeLog`, suggesting that lower `IncomeLog` may be the factor in insurance cancellations than `Race`. However, the simultaneous negative correlation of both `Involrate` and `Race` and other variables with `IncomeLog` complicates the attribution of causality, making it challenging to isolate the effects of these variables. As long as insurance companies utilize income to deny insurance without discriminating, it is legal to reject insurance based on low income.
+
+```{r, warning=FALSE, fig.align='center'}
+#Boxplots
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+
+plots <- lapply(variables, function(var) {
+  p <- ggplot(chicago, aes_string(y = var)) + 
+    geom_boxplot(aes(group=1)) +  # We suppress the outlier point here
+    labs(title = var) +
+    theme_linedraw() +
+    theme(plot.title = element_text(hjust = 0.5, face = 'bold'))
+
+  # Compute the boxplot stats to determine the outliers
+  bpstats <- boxplot.stats(chicago[[var]])$out
+
+  if(length(bpstats) > 0){
+    outliers <- chicago[chicago[[var]] %in% bpstats,]
+    p <- p + geom_text(data=outliers, aes(x = 0, y = as.numeric(outliers[[var]]), label = outliers$Zip),size = 2, nudge_x = 0.1, check_overlap = TRUE, hjust = 0.2)
+  }
+  
+  return(p)
+})
+
+# Arrange the plots in a 2x3 grid
+grid.arrange(grobs = plots, ncol = 3)
+
+```
+
+Notably, zip codes `60607`, `60610`, `60611`, and `60612` recur as outliers across various boxplots. It would be good practice to delve deeper into these and other outlying observations to extract more granular insights. We would focus on outliers in `Fire`, `Theft`, `IncomeLog`, and `Involrate` and try to examine `Race` and `Age` values of the outlying observations in order identify how these factors relate.
+
+```{r}
+knitr::kable(chicago[chicago$Zip %in% c(60607, 60610, 60611, 60612, 60652, 60653, 60622, 60621),c("Zip",variables) ], row.names = FALSE, align = 'l', caption = "Outlier Table")
+```
+
+Upon examining the summary, it's evident that outliers are predominantly associated with observations having a significant minority composition. Notably, outliers related to `Involrate` exhibit a high minority `Race` composition, with the exception of 60622. This may suggest the potential incorporation of `Race` in underwriting processes. Let's delve deeper into the primary outliers that repeatedly emerged. 
+
+1) ZIP code `60610` exhibits a minority `Race` composition near the 3rd quantile, exceptionally high incidents of both `Fire` and `Theft`, a lower `IncomeLog`, and a `Involrate` below the median.
+
+2) ZIP code `60611` is characterized by a lower minority `Race` composition, a heightened theft rate, the highest `IncomeLog`, and an a `Involrate` of 0.
+
+3) ZIP code `60607` possesses a higher minority `Race` composition, the peak values in both `Theft` and `Fire` incidents, a diminished `IncomeLog`, and a comparatively low `Involrate`.
+
+3) ZIP code `60612` possesses extremely high minority `Race` composition, high `Fire` and moderate `Theft` rate, a below median `IncomeLog` and the highest `Involrate`.
+
+# Modelling
+
+Concluding our exploratory data analysis and implementing the required transformations, we should now transition to constructing a robust linear regression model to assess insurability. We utilise robust linear regression model to reduce the influence of outliers on our model. It is important to take into account the sequencing of variables when fitting the model. Primarily, variables such as `Fire`, `Theft`, and `Income` should be considered before delving into factors like `Race` and `Age`. This sequence reflects the belief that insurance companies predicate their decisions on established legal frameworks. Subsequently, `Race` and `Area` are introduced as auxiliary variables that might explain any residual variability within the fitted model. However, the ordering won't affect the coefficients of the model, it is more about how we want to interpret the model. First, we start by fitting a full model.
+
+```{r}
+# Modelling
+# Load necessary libraries
+library(MASS)
+library(knitr)
+
+# Fit the model
+fit <- rlm(Involrate ~ Fire + Theft + IncomeLog + Race + Age, data = chicago)
+
+# Summary of the model
+fit_summary <- summary(fit)
+
+# Extracting coefficients table
+coef_table <- fit_summary$coefficients
+
+# Adding row names as a new column
+coef_table <- cbind(Estimate = rownames(coef_table), coef_table)
+
+# Renaming the row names column
+rownames(coef_table) <- NULL
+
+# Use knitr::kable() to create a nice table
+knitr::kable(coef_table, caption = "Summary of Robust Linear Model", align = 'l')
+
+```
+
+$$
+Involrate = 2.7790 + 0.0121 \times Fire - 0.0037 \times Theft - 0.2937 \times IncomeLog + 0.0014 \times Race + 0.0001 \times Age
+$$
+
+Upon reviewing the model's summary output, it is evident that all variables, except `Age`, hold statistical significance. Significance of `Race` in the model indicates insurance company utilising `Race` for redlining. However, no conclusions can be made before examining the diagnostic plots.
+
+```{r, include = FALSE}
+x <- chicago[,c("Fire", "Theft", "IncomeLog", "Race", "Age")]
+par(mfrow=c(2,2), pty="s")  # Set 2x2 layout and square plots
+
+# Identify high leverage points
+high_leverage <- which(hat(x) > 2*4/13)
+
+plot(c(1:47), hat(x), ylim=c(0, max(hat(x))), 
+     main="Leverage Points", 
+     xlab="Case Number",
+     ylab="Leverage")
+segments(c(1:47), 0, c(1:47), hat(x))
+abline(h=2*4/13, col = 'red')
+text(high_leverage, hat(x)[high_leverage], labels=high_leverage, cex=0.7, pos=4)
+
+# QQ plot
+qqnorm(residuals(fit),
+       main="Quantile-Quantile Plot",
+       xlab="Gaussian Quantiles",
+       ylab="Residuals")
+qqline(residuals(fit), col = 'red')
+
+# Residual plot with labeled outliers
+outliers_resid <- which(abs(residuals(fit)) > 2*sd(residuals(fit))) # Change threshold as per need
+plot(fitted(fit), residuals(fit),
+     main="Residual Plot",
+     xlab="Fitted Values",
+     ylab="Residuals")
+lines(lowess(fitted(fit), residuals(fit)), col="red")
+text(fitted(fit)[outliers_resid], residuals(fit)[outliers_resid], labels=outliers_resid, cex=0.7, pos=4)
+
+# Absolute Residual plot
+plot(fitted(fit), abs(residuals(fit)),
+     main="Absolute Residual Plot",
+     xlab="Fitted Values",
+     ylab="Absolute Residuals")
+lines(lowess(fitted(fit), abs(residuals(fit))), col = 'red')
+
+mtext("Diagnostics for the model fit to the Cement data",
+      side=3, line=2, outer=T, cex=1.5)
+mtext("The model includes all variables on the raw scale",
+      side=1, line=2, outer=T, cex=1.5)
+
+```
+
+```{r, fig.align='center'}
+img <- readPNG("Diagnostic1.png")
+grid.raster(img, width = 0.6, height = 0.7)
+```
+
+The residual plots exhibit a funnel-shaped pattern, signaling an issue with heteroscedasticity. This is further evidenced by the QQ-plot, where the points diverge from the expected line at both ends. Given that `Involrate` includes zero values, a logarithmic transformation isn't feasible. Therefore, we opt for a square root transformation of `Involrate` to mitigate the heteroscedasticity.
+
+```{r}
+# Square root transformation as Involrate can be 0
+fit.transformed <- rlm(sqrt(Involrate) ~ Fire + Theft + IncomeLog + Race + Age, data = chicago)
+
+#summary(fit.transformed)
+
+# Summary of the model
+fit_summary <- summary(fit.transformed)
+
+# Extracting coefficients table
+coef_table <- fit_summary$coefficients
+
+# Adding row names as a new column
+coef_table <- cbind(Estimate = rownames(coef_table), coef_table)
+
+# Renaming the row names column
+rownames(coef_table) <- NULL
+
+# Use knitr::kable() to create a nice table
+knitr::kable(coef_table, caption = "Summary of Robust Linear Model", align = 'l')
+```
+
+$$
+\sqrt{Involrate} = 1.2614 + 0.0130 \times Fire - 0.0032 \times Theft - 0.1417 \times IncomeLog + 0.0037 \times Race + 0.0026 \times Age
+$$
+
+Upon applying transformations to the dependent variable, the resultant model exhibits notable difference. Notably, the variable `Age` has emerged as statistically significant predictors along with existing significant variables, whereas `IncomeLog` has been rendered non-significant. To substantiate the robustness of this revised model, it is important to analyse the associated diagnostic plots.
+
+```{r, include=FALSE}
+par(mfrow=c(2,2), pty="s")  # Set 2x2 layout and square plots
+
+# Identify high leverage points
+high_leverage <- which(hat(x) > 2*4/13)
+
+plot(c(1:47), hat(x), ylim=c(0, max(hat(x))), 
+     main="Leverage Points", 
+     xlab="Case Number",
+     ylab="Leverage")
+segments(c(1:47), 0, c(1:47), hat(x))
+abline(h=2*4/13, col = 'red')
+text(high_leverage, hat(x)[high_leverage], labels=high_leverage, cex=0.7, pos=4)
+
+# QQ plot
+qqnorm(residuals(fit.transformed),
+       main="Quantile-Quantile Plot",
+       xlab="Gaussian Quantiles",
+       ylab="Residuals")
+qqline(residuals(fit.transformed), col = 'red')
+
+# Residual plot with labeled outliers
+outliers_resid <- which(abs(residuals(fit.transformed)) > 2*sd(residuals(fit.transformed))) # Change threshold as per need
+plot(fitted(fit.transformed), residuals(fit.transformed),
+     main="Residual Plot",
+     xlab="Fitted Values",
+     ylab="Residuals")
+lines(lowess(fitted(fit.transformed), residuals(fit.transformed)), col="red")
+text(fitted(fit.transformed)[outliers_resid], residuals(fit.transformed)[outliers_resid], labels=outliers_resid, cex=0.7, pos=4)
+
+# Absolute Residual plot
+plot(fitted(fit.transformed), abs(residuals(fit.transformed)),
+     main="Absolute Residual Plot",
+     xlab="Fitted Values",
+     ylab="Absolute Residuals")
+lines(lowess(fitted(fit.transformed), abs(residuals(fit.transformed))), col = 'red')
+
+mtext("Diagnostics for the model fit to the Cement data",
+      side=3, line=2, outer=T, cex=1.5)
+mtext("The model includes all variables on the raw scale",
+      side=1, line=2, outer=T, cex=1.5)
+
+```
+
+```{r, fig.align='center'}
+img <- readPNG("Diagnostic2.png")
+grid.raster(img, width = 0.6, height = 0.7)
+```
+
+The diagnostic plots can be interpreted in a structured manner as follows:
+
+1) Residual Plots: The residuals' distribution displays a nearly uniform spread across the range, pointing to the assumption of homoscedasticity being met. The Lowess curve, while exhibiting a slight curvature, is within acceptable bounds, allowing us to proceed under the linearity assumption.
+
+2) Normal Q-Q Plot: The data points' alignment closely with the reference line suggests the residuals are approximately normally distributed. A few discrepancies at the beginning can be considered statistically insignificant given the sample size, reinforcing our confidence in the normality assumption.
+
+3) Leverage Plot: The plot identifies a single observation (24) as marginally exceeding the leverage threshold. Its minimal departure from the reference line implies it's not problematic from an influence perspective.
+
+Having addressed and validated the primary assumptions for our regression model, we can confidently proceed with our analysis.
+
+\newpage
+
+```{r}
+knitr::kable(t(vif(fit.transformed)),align = "l", caption = "VIF table")
+```
+
+The Variance Inflation Factor (VIF) analysis indicates an absence of multicollinearity concerns within the model. This conclusion is supported by the application of a commonly accepted rule of thumb, which states that a VIF below 10 signifies a model is free from multicollinearity issues. This signifies that standard errors of `Race` and `Age` are not inflated by other variables.
+
+# Isolated Effects
+
+In the scatterplot matrices, we analyzed the bivariate associations involving `Involrate` and other covariates. However, these matrices do not provide insights into the partial effect of the predictor variable, controlling for other variables in the model. To address this, we employ added-variable plots to explore the adjusted effect.
+
+```{r, fig.align='center', out.width= "70%"}
+library(car)
+par(pty = "s")
+avPlots(fit.transformed,~Race + Age, col.points='black', col.lines='red', layout=c(1, 2))
+
+```
+
+The added-variable plot indicates that `Race` and `Age` have a significant positive partial correlation with `Involrate`, after adjusting for potential covariates. This provides statistical support to the claim that private insurance companies had been employing non-permissible metrics, specifically `Race` composition and `Age` of the house, as determinants in their insurance approval decisions.
+
+# Location
+
+To enhance the utility of location in our analytical model, we employ the `chredlin` dataset from the `faraway` package, which encompasses the same data with zip codes distinctly classified as either north side or south side of Chicago. Evaluating the robustness of our model by focusing solely on one geographic area could provide valuable insights into its performance.
+
+```{r}
+library(faraway)
+
+new_chicago <- chredlin
+
+new_chicago <- cbind(Zip = rownames(new_chicago), new_chicago)
+rownames(new_chicago) <- 1:nrow(new_chicago)
+new_chicago$Zip <- as.double(new_chicago$Zip)
+
+chicago$side <- NULL
+
+df1 <- chicago %>% left_join(new_chicago[, c('Zip', 'side')], by = 'Zip')
+```
+
+```{r}
+north_model <- rlm(sqrt(Involrate) ~ Fire + Theft + IncomeLog + Race + Age, data = df1[df1$side == 'n',])
+
+# Summary of the model
+fit_summary <- summary(north_model)
+
+# Extracting coefficients table
+coef_table <- fit_summary$coefficients
+
+# Adding row names as a new column
+coef_table <- cbind(Estimate = rownames(coef_table), coef_table)
+
+# Renaming the row names column
+rownames(coef_table) <- NULL
+
+# Use knitr::kable() to create a nice table
+knitr::kable(coef_table, caption = "Summary of North Side Model", align = 'l')
+```
+
+\newpage
+```{r}
+south_model <- rlm(sqrt(Involrate) ~ Fire + Theft + IncomeLog + Race + Age, data = df1[df1$side == 's',])
+
+# Summary of the model
+fit_summary <- summary(south_model)
+
+# Extracting coefficients table
+coef_table <- fit_summary$coefficients
+
+# Adding row names as a new column
+coef_table <- cbind(Estimate = rownames(coef_table), coef_table)
+
+# Renaming the row names column
+rownames(coef_table) <- NULL
+
+# Use knitr::kable() to create a nice table
+knitr::kable(coef_table, caption = "Summary of South Side Model", align = 'l')
+```
+
+As we can understand from the summary outputs of model above, our model generalises well in the north side, but performs differently in the south side. `Age` and `Theft` turn out to be non significant contributor, whereas `IncomeLog` is significant. This suggests that our model doesn't generalise well and should only be used at macroscopic scale. It is also possible due to the small sample size resulting by subsetting the data, the model fit doesn't have enough information. However, in both the models, `Race` appears to be a significant factor which means it was used as an identifying factor when deciding insurability of a neighbourhood.
+
+# Final Model
+
+$$
+\sqrt{Involrate} = 1.2614 + 0.0130 \times Fire - 0.0032 \times Theft - 0.1417 \times IncomeLog + 0.0037 \times Race + 0.0026 \times Age
+$$
+
+# Conclusion 
+
+Based on the regression analysis, it can be statistically inferred that underwriting practices were significantly influenced by the variables `Race` and `Age` in addition to `Fire` and `Theft`, potentially indicating discriminatory practices in insurance underwriting. The variable `IncomeLog`, however, did not emerge as a statistically significant predictor, suggesting its limited role in the decision-making process. Furthermore, when the model was applied to a specific geographic location (north side or south side), the covariates exhibited distinct behaviors, implying that the model's applicability may be more appropriate at a macroscopic level rather than a localized one. This observation underscores the possibility that the current model may not fully capture the intricacies of the issue at hand. In light of these findings, it is recommended that policymakers consider these statistical insights to formulate more equitable policies and regulations that actively prevent redlining, particularly those practices rooted in racial discrimination.
